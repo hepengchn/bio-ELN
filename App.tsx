@@ -8,15 +8,16 @@ import {
   Trash2, ArrowLeft, Calendar, Search, X,
   MoreHorizontal, Copy, Check, FileDown, ClipboardList,
   Activity, BookOpen, History, ChevronLeft,
-  Lock, LogIn, Download, UploadCloud, Github, Settings, RefreshCw
+  Lock, LogIn, Download, UploadCloud, Github, Settings, RefreshCw,
+  Save
 } from 'lucide-react';
 
 // --- Color Constants & Styles ---
 const COLORS = {
   primary: 'indigo',
-  sidebar: 'bg-slate-800',
-  sidebarHover: 'hover:bg-slate-700',
-  sidebarActive: 'bg-indigo-500/20 text-indigo-200 border-r-2 border-indigo-400',
+  sidebar: 'bg-slate-900',
+  sidebarHover: 'hover:bg-slate-800 hover:text-orange-300',
+  sidebarActive: 'text-orange-400 border-r-2 border-orange-400 bg-slate-800/50',
   bg: 'bg-slate-50',
 };
 
@@ -29,7 +30,8 @@ const App = () => {
   const [authError, setAuthError] = useState('');
 
   // --- App State ---
-  const [currentView, setCurrentView] = useState<AppView>('DASHBOARD');
+  // Default to IN_PROGRESS since Dashboard is removed
+  const [currentView, setCurrentView] = useState<AppView>('IN_PROGRESS');
   
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -62,8 +64,10 @@ const App = () => {
   const [newExpTitle, setNewExpTitle] = useState('');
 
   // --- GitHub State ---
-  const [showSettings, setShowSettings] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // User Configurable Configuration
   const [ghConfig, setGhConfig] = useState<GitHubConfig>({
     token: '',
     owner: '',
@@ -80,7 +84,7 @@ const App = () => {
     if (sessionAuth === 'true') {
       setIsAuthenticated(true);
     }
-    
+
     // Load GitHub Config
     const savedGhConfig = localStorage.getItem('labnote_gh_config');
     if (savedGhConfig) {
@@ -112,9 +116,6 @@ const App = () => {
       setSelectedProject(null); // Clear selected project when in global view
     } else {
       // Keep experiments state if just entering editor, otherwise clear if no context
-      if (currentView !== 'EDITOR') {
-        // Optional: clear experiments if navigating away?
-      }
     }
     setActiveMenuId(null);
   }, [selectedProject, currentView, isAuthenticated]);
@@ -172,7 +173,7 @@ const App = () => {
       if (selectedProject?.id === projectId) {
         setSelectedProject(null);
         setSelectedExperiment(null);
-        setCurrentView('DASHBOARD'); // Reset view
+        setCurrentView('IN_PROGRESS'); // Reset view to default
       }
     }
   };
@@ -287,16 +288,16 @@ const App = () => {
   };
 
   // --- GitHub Sync Handlers ---
-
+  
   const saveGhConfig = () => {
     localStorage.setItem('labnote_gh_config', JSON.stringify(ghConfig));
     setShowSettings(false);
   };
 
   const handleSyncToGitHub = async () => {
-    if (!ghConfig.token || !ghConfig.repo) {
-      setShowSettings(true);
-      return;
+    if (!ghConfig.token || !ghConfig.owner || !ghConfig.repo) {
+       setShowSettings(true);
+       return;
     }
     
     setIsSyncing(true);
@@ -319,9 +320,9 @@ const App = () => {
   };
 
   const handleLoadFromGitHub = async () => {
-    if (!ghConfig.token || !ghConfig.repo) {
-      setShowSettings(true);
-      return;
+    if (!ghConfig.token || !ghConfig.owner || !ghConfig.repo) {
+       setShowSettings(true);
+       return;
     }
 
     if (!confirm('This will replace your LOCAL data with data from GitHub. Continue?')) return;
@@ -351,7 +352,6 @@ const App = () => {
   const handleExportExperiment = (e: React.MouseEvent, exp: Experiment) => {
     e.stopPropagation();
     setActiveMenuId(null);
-    // ... (Existing export logic preserved, abbreviated for clarity but logic remains)
     // Date formatter YYYY-MM-DD for display
     const formatDateISO = (date: Date) => {
       const y = date.getFullYear();
@@ -743,7 +743,7 @@ const App = () => {
                <input 
                  type="password" 
                  value={ghConfig.token}
-                 onChange={(e) => setGhConfig({...ghConfig,token: e.target.value})}
+                 onChange={(e) => setGhConfig({...ghConfig, token: e.target.value})}
                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
                  placeholder="ghp_xxxxxxxxxxxx"
                />
@@ -758,7 +758,7 @@ const App = () => {
                     value={ghConfig.owner}
                     onChange={(e) => setGhConfig({...ghConfig, owner: e.target.value})}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
-                    placeholder="e.g. johndoe"
+                    placeholder="e.g. username"
                   />
                </div>
                <div>
@@ -768,7 +768,7 @@ const App = () => {
                     value={ghConfig.repo}
                     onChange={(e) => setGhConfig({...ghConfig, repo: e.target.value})}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
-                    placeholder="e.g. lab-notes"
+                    placeholder="e.g. repo-name"
                   />
                </div>
              </div>
@@ -814,17 +814,13 @@ const App = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto py-6 space-y-8">
-           {/* Section 1: Dashboard & Tasks */}
+           {/* Section 1: Modules */}
            <div className="px-3 space-y-1">
-             <button onClick={() => { setCurrentView('DASHBOARD'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${currentView === 'DASHBOARD' && !selectedProject ? COLORS.sidebarActive : 'hover:bg-slate-800 text-slate-400'}`}>
-                <LayoutGrid size={20} className="shrink-0" />
-                {isSidebarOpen && <span className="font-medium">Dashboard</span>}
-             </button>
-             <button onClick={() => { setCurrentView('IN_PROGRESS'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${currentView === 'IN_PROGRESS' ? COLORS.sidebarActive : 'hover:bg-slate-800 text-slate-400'}`}>
+             <button onClick={() => { setCurrentView('IN_PROGRESS'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${currentView === 'IN_PROGRESS' ? COLORS.sidebarActive : COLORS.sidebarHover + ' text-slate-400'}`}>
                 <Activity size={20} className="shrink-0" />
-                {isSidebarOpen && <span className="font-medium">In Progress</span>}
+                {isSidebarOpen && <span className="font-medium">Active Experiments</span>}
              </button>
-             <button onClick={() => { setCurrentView('TASKS'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${currentView === 'TASKS' ? COLORS.sidebarActive : 'hover:bg-slate-800 text-slate-400'}`}>
+             <button onClick={() => { setCurrentView('TASKS'); setSelectedProject(null); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${currentView === 'TASKS' ? COLORS.sidebarActive : COLORS.sidebarHover + ' text-slate-400'}`}>
                 <ClipboardList size={20} className="shrink-0" />
                 {isSidebarOpen && <span className="font-medium">Tasks</span>}
              </button>
@@ -848,7 +844,7 @@ const App = () => {
              <div className="space-y-0.5">
                {projects.map(p => (
                  <div key={p.id} className="group relative">
-                   <button onClick={() => { setSelectedProject(p); setCurrentView('DASHBOARD'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm ${selectedProject?.id === p.id ? COLORS.sidebarActive : 'hover:bg-slate-800 text-slate-400'}`}>
+                   <button onClick={() => { setSelectedProject(p); setCurrentView('DASHBOARD'); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm ${selectedProject?.id === p.id ? COLORS.sidebarActive : COLORS.sidebarHover + ' text-slate-400'}`}>
                       <BookOpen size={18} className="shrink-0" />
                       {isSidebarOpen && <span className="truncate">{p.name}</span>}
                    </button>
@@ -859,35 +855,34 @@ const App = () => {
         </div>
 
         {/* Bottom Actions: Sync & Settings */}
-        <div className="p-3 border-t border-slate-800 space-y-2">
-           {/* Cloud Sync Buttons */}
+        <div className="p-3 border-t border-slate-800">
+           {/* Cloud Sync Buttons - Compact Version */}
            {isSidebarOpen ? (
-             <div className="bg-slate-800 rounded-lg p-2 space-y-2">
-                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex justify-between items-center">
-                   <span>Data Sync</span>
-                   {isSyncing && <RefreshCw size={10} className="animate-spin text-indigo-400"/>}
+             <div className="bg-slate-800/50 rounded-lg p-3">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Data Sync</span>
+                  {isSyncing && <RefreshCw size={10} className="animate-spin text-indigo-400"/>}
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="flex gap-2 justify-between">
                    <button 
                      onClick={handleSyncToGitHub}
                      disabled={isSyncing}
-                     className="flex flex-col items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-md transition-colors text-xs gap-1"
+                     className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors"
+                     title="Save to Cloud"
                    >
-                     <UploadCloud size={14} />
-                     Save to Cloud
+                     <UploadCloud size={16} />
                    </button>
                    <button 
                      onClick={handleLoadFromGitHub}
                      disabled={isSyncing}
-                     className="flex flex-col items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-300 py-2 rounded-md transition-colors text-xs gap-1"
+                     className="p-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-md transition-colors"
+                     title="Load from Cloud"
                    >
-                     <Download size={14} />
-                     Load from Cloud
+                     <Download size={16} />
                    </button>
-                </div>
-                <div className="flex gap-1 pt-1">
-                   <button onClick={handleBackupData} title="Export JSON" className="flex-1 py-1 text-slate-500 hover:text-slate-300 text-xs bg-slate-800/50 rounded flex justify-center"><FileDown size={12} /></button>
-                   <button onClick={handleRestoreClick} title="Import JSON" className="flex-1 py-1 text-slate-500 hover:text-slate-300 text-xs bg-slate-800/50 rounded flex justify-center"><UploadCloud size={12} /></button>
+                   <div className="w-px bg-slate-700 mx-1"></div>
+                   <button onClick={handleBackupData} title="Export JSON" className="p-2 text-slate-400 hover:text-white bg-slate-700/50 hover:bg-slate-700 rounded-md"><FileDown size={16} /></button>
+                   <button onClick={handleRestoreClick} title="Import JSON" className="p-2 text-slate-400 hover:text-white bg-slate-700/50 hover:bg-slate-700 rounded-md"><UploadCloud size={16} /></button>
                 </div>
              </div>
            ) : (
@@ -895,10 +890,9 @@ const App = () => {
                 <button onClick={handleSyncToGitHub} title="Save to GitHub" className="p-2 hover:bg-indigo-600 rounded-lg text-slate-400 hover:text-white transition-all"><UploadCloud size={20}/></button>
              </div>
            )}
-
            <button 
              onClick={() => setShowSettings(true)}
-             className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${!isSidebarOpen && 'justify-center'}`}
+             className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${!isSidebarOpen && 'justify-center'} mt-2`}
            >
               <Settings size={20} className="shrink-0" />
               {isSidebarOpen && <span className="font-medium text-sm">Settings</span>}
@@ -1010,7 +1004,7 @@ const App = () => {
             </div>
          </div>
        ) : (
-         // DASHBOARD VIEW
+         // DASHBOARD / PROJECT LIST VIEW
          <div className="flex-1 bg-slate-50 flex flex-col h-full overflow-hidden">
             <header className="px-8 py-8">
               <div className="flex items-center justify-between mb-2">
@@ -1061,72 +1055,73 @@ const App = () => {
                     {selectedProject && <p className="text-sm">Click "New Experiment" to start.</p>}
                  </div>
                ) : (
-                 <div className="grid grid-cols-1 gap-4">
+                 <div className="grid grid-cols-1 gap-2">
                     {experiments
                       .filter(e => e.title.toLowerCase().includes(searchQuery.toLowerCase()))
                       .map(exp => (
                       <div 
                         key={exp.id} 
-                        className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer group relative flex items-center justify-between"
+                        className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer group flex items-center gap-4"
                         onClick={() => { setSelectedExperiment(exp); setCurrentView('EDITOR'); }}
                       >
-                         <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                         <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
                               exp.status === ExperimentStatus.COMPLETED ? 'bg-emerald-100 text-emerald-600' :
                               exp.status === ExperimentStatus.PAUSED ? 'bg-amber-100 text-amber-600' :
                               'bg-indigo-100 text-indigo-600'
                             }`}>
                               {exp.status === ExperimentStatus.COMPLETED ? <Check size={20} /> : <FlaskConical size={20} />}
-                            </div>
-                            <div>
-                               <h3 className="font-bold text-slate-800 text-lg group-hover:text-indigo-600 transition-colors">{exp.title}</h3>
-                               <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                                  <span>Updated: {formatDate(exp.updatedAt)}</span>
-                                  {/* Show project name if in global view */}
-                                  {!selectedProject && (
-                                    <>
-                                      <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-                                      <span className="text-indigo-500 font-medium">
-                                        {projects.find(p => p.id === exp.projectId)?.name}
-                                      </span>
-                                    </>
-                                  )}
-                               </div>
-                            </div>
                          </div>
                          
-                         <div className="flex items-center gap-4">
-                             <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-                                exp.status === ExperimentStatus.COMPLETED ? 'bg-emerald-50 text-emerald-700' :
-                                exp.status === ExperimentStatus.PAUSED ? 'bg-amber-50 text-amber-700' :
-                                'bg-indigo-50 text-indigo-700'
-                             }`}>
-                               {exp.status === ExperimentStatus.IN_PROGRESS ? 'In Progress' : exp.status}
-                             </span>
+                         <div className="flex-1 flex items-center justify-between min-w-0">
+                            <h3 className="font-bold text-slate-800 text-lg group-hover:text-indigo-600 transition-colors truncate pr-4">{exp.title}</h3>
+                            
+                            <div className="flex items-center gap-6 shrink-0">
+                                {/* Inline Status Selector */}
+                                <div onClick={(e) => e.stopPropagation()} className="relative">
+                                  <select 
+                                    value={exp.status}
+                                    onChange={(e) => handleUpdateExperiment({ status: e.target.value as ExperimentStatus }, exp.id)}
+                                    className={`appearance-none pl-3 pr-8 py-1 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer outline-none focus:ring-2 focus:ring-offset-1 border ${
+                                       exp.status === ExperimentStatus.COMPLETED ? 'bg-emerald-50 text-emerald-700 border-emerald-200 focus:ring-emerald-500' :
+                                       exp.status === ExperimentStatus.PAUSED ? 'bg-amber-50 text-amber-700 border-amber-200 focus:ring-amber-500' :
+                                       'bg-indigo-50 text-indigo-700 border-indigo-200 focus:ring-indigo-500'
+                                    }`}
+                                  >
+                                    <option value={ExperimentStatus.IN_PROGRESS}>In Progress</option>
+                                    <option value={ExperimentStatus.PAUSED}>Paused</option>
+                                    <option value={ExperimentStatus.COMPLETED}>Completed</option>
+                                  </select>
+                                  <ChevronLeft size={12} className="-rotate-90 absolute right-3 top-1/2 -translate-y-1/2 opacity-50 pointer-events-none" />
+                                </div>
 
-                             <div className="relative action-menu-trigger" onClick={(e) => e.stopPropagation()}>
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === exp.id ? null : exp.id); }}
-                                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
-                                >
-                                   <MoreHorizontal size={20} />
-                                </button>
-                                
-                                {activeMenuId === exp.id && (
-                                  <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-20 animate-[fadeIn_0.1s_ease-out]">
-                                     <button onClick={(e) => handleCopyExperimentRequest(e, exp)} className="w-full text-left px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 flex items-center gap-2">
-                                        <Copy size={16} /> Duplicate
-                                     </button>
-                                     <button onClick={(e) => handleExportExperiment(e, exp)} className="w-full text-left px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 flex items-center gap-2">
-                                        <FileDown size={16} /> Export Word
-                                     </button>
-                                     <div className="h-px bg-slate-100 my-1"></div>
-                                     <button onClick={(e) => handleDeleteExperiment(e, exp.id)} className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
-                                        <Trash2 size={16} /> Delete
-                                     </button>
-                                  </div>
-                                )}
-                             </div>
+                                <div className="text-xs text-slate-500 w-24 text-right">
+                                  {formatDate(exp.updatedAt)}
+                                </div>
+
+                                <div className="relative action-menu-trigger" onClick={(e) => e.stopPropagation()}>
+                                    <button 
+                                      onClick={(e) => { e.stopPropagation(); setActiveMenuId(activeMenuId === exp.id ? null : exp.id); }}
+                                      className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
+                                    >
+                                       <MoreHorizontal size={20} />
+                                    </button>
+                                    
+                                    {activeMenuId === exp.id && (
+                                      <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-100 py-1 z-20 animate-[fadeIn_0.1s_ease-out]">
+                                         <button onClick={(e) => handleCopyExperimentRequest(e, exp)} className="w-full text-left px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 flex items-center gap-2">
+                                            <Copy size={16} /> Duplicate
+                                         </button>
+                                         <button onClick={(e) => handleExportExperiment(e, exp)} className="w-full text-left px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50 hover:text-indigo-600 flex items-center gap-2">
+                                            <FileDown size={16} /> Export Word
+                                         </button>
+                                         <div className="h-px bg-slate-100 my-1"></div>
+                                         <button onClick={(e) => handleDeleteExperiment(e, exp.id)} className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
+                                            <Trash2 size={16} /> Delete
+                                         </button>
+                                      </div>
+                                    )}
+                                 </div>
+                            </div>
                          </div>
                       </div>
                     ))}
