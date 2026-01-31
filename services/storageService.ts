@@ -130,5 +130,37 @@ export const StorageService = {
 
   saveTasks: (tasks: Task[]) => {
     localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+  },
+
+  // --- Data Backup & Restore ---
+
+  exportAllData: (): string => {
+    const backup = {
+      version: 1,
+      timestamp: Date.now(),
+      projects: StorageService.getProjects(),
+      experiments: StorageService.getExperiments(),
+      tasks: StorageService.getTasks()
+    };
+    return JSON.stringify(backup, null, 2);
+  },
+
+  importAllData: (jsonString: string): boolean => {
+    try {
+      const data = JSON.parse(jsonString);
+      
+      // Basic validation
+      if (!data.projects || !Array.isArray(data.projects)) throw new Error("Invalid Projects Data");
+      if (!data.experiments || !Array.isArray(data.experiments)) throw new Error("Invalid Experiments Data");
+      
+      localStorage.setItem(PROJECTS_KEY, JSON.stringify(data.projects));
+      localStorage.setItem(EXPERIMENTS_KEY, JSON.stringify(data.experiments));
+      localStorage.setItem(TASKS_KEY, JSON.stringify(data.tasks || []));
+      
+      return true;
+    } catch (e) {
+      console.error("Import failed:", e);
+      return false;
+    }
   }
 };

@@ -31,3 +31,11 @@ export interface Task {
   completed: boolean;
   createdAt: number;
 }
+
+export interface GitHubConfig {
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  path: string; // usually 'data.json'
+}
