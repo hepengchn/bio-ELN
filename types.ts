@@ -31,5 +31,3 @@ export interface Task {
   completed: boolean;
   createdAt: number;
 }
-
-export type ViewMode = 'DASHBOARD' | 'PROJECT_LIST' | 'EDITOR';
