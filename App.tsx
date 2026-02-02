@@ -9,7 +9,7 @@ import {
   MoreHorizontal, Copy, Check, FileDown, ClipboardList,
   Activity, BookOpen, History, ChevronLeft, ChevronRight,
   Lock, LogIn, Download, UploadCloud, Github, Settings, RefreshCw,
-  CloudCheck, CloudOff, Loader2
+  Cloud, CloudOff, Loader2
 } from 'lucide-react';
 
 // --- Color Constants & Styles ---
@@ -935,7 +935,7 @@ const App = () => {
                      syncStatus === 'CHECKING' ? 'Checking...' :
                      syncStatus === 'ERROR' ? 'Sync Error' : 'Ready'}
                   </span>
-                  {syncStatus === 'SYNCED' ? <CloudCheck size={14} className="text-emerald-400"/> :
+                  {syncStatus === 'SYNCED' ? <Cloud size={14} className="text-emerald-400"/> :
                    syncStatus === 'ERROR' ? <CloudOff size={14} className="text-red-400"/> :
                    syncStatus !== 'IDLE' ? <Loader2 size={14} className="animate-spin text-indigo-400"/> : null}
                 </div>
