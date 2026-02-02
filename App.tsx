@@ -4,12 +4,12 @@ import { StorageService } from './services/storageService';
 import { GitHubService } from './services/githubService';
 import RichEditor from './components/RichEditor';
 import { 
-  Plus, FlaskConical, ChevronRight, LayoutGrid, 
+  Plus, FlaskConical, LayoutGrid, 
   Trash2, ArrowLeft, Calendar, Search, X,
   MoreHorizontal, Copy, Check, FileDown, ClipboardList,
-  Activity, BookOpen, History, ChevronLeft,
+  Activity, BookOpen, History, ChevronLeft, ChevronRight,
   Lock, LogIn, Download, UploadCloud, Github, Settings, RefreshCw,
-  Save
+  CloudCheck, CloudOff, Loader2
 } from 'lucide-react';
 
 // --- Color Constants & Styles ---
@@ -22,6 +22,7 @@ const COLORS = {
 };
 
 type AppView = 'DASHBOARD' | 'EDITOR' | 'TASKS' | 'PROJECT_NOTES' | 'IN_PROGRESS';
+type SyncStatus = 'IDLE' | 'CHECKING' | 'SYNCED' | 'SAVING' | 'ERROR';
 
 const App = () => {
   // --- Auth State ---
@@ -30,7 +31,6 @@ const App = () => {
   const [authError, setAuthError] = useState('');
 
   // --- App State ---
-  // Default to IN_PROGRESS since Dashboard is removed
   const [currentView, setCurrentView] = useState<AppView>('IN_PROGRESS');
   
   const [projects, setProjects] = useState<Project[]>([]);
@@ -63,45 +63,100 @@ const App = () => {
   const [isNewExpModalOpen, setIsNewExpModalOpen] = useState(false);
   const [newExpTitle, setNewExpTitle] = useState('');
 
-  // --- GitHub State ---
-  const [isSyncing, setIsSyncing] = useState(false);
+  // --- GitHub State & Auto Sync ---
   const [showSettings, setShowSettings] = useState(false);
-  
-  // User Configurable Configuration
-  const [ghConfig, setGhConfig] = useState<GitHubConfig>({
-    token: '',
-    owner: '',
-    repo: '',
-    branch: 'main',
-    path: 'labnote_data.json'
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('IDLE');
+  const [lastSyncTime, setLastSyncTime] = useState<string>('');
+  const autoSaveTimerRef = useRef<any>(null);
+  const isInitialLoadRef = useRef(true); // Prevent auto-save triggering on first render
+
+  // Configuration from Environment Variables or Local Storage
+  const [ghConfig, setGhConfig] = useState<GitHubConfig>(() => {
+    // Safely access env vars to prevent crash if import.meta.env is undefined
+    const env = (import.meta as any).env || {};
+    return {
+      token: env.VITE_GITHUB_TOKEN || '',
+      owner: env.VITE_GITHUB_OWNER || 'hepengchn',
+      repo: env.VITE_GITHUB_REPO || 'bio-ELN',
+      branch: env.VITE_GITHUB_BRANCH || 'main',
+      path: 'labnote_data.json'
+    };
   });
 
   // --- Effects ---
   
-  // Auth Check
+  // 1. Auth Check & Config Load
   useEffect(() => {
     const sessionAuth = sessionStorage.getItem('labnote_auth');
     if (sessionAuth === 'true') {
       setIsAuthenticated(true);
     }
 
-    // Load GitHub Config
+    // Try to load user override config from local storage, otherwise use Env vars
     const savedGhConfig = localStorage.getItem('labnote_gh_config');
     if (savedGhConfig) {
       setGhConfig(JSON.parse(savedGhConfig));
     }
   }, []);
 
-  // Data Load
+  // 2. Initial Data Load & Cloud Pull (Auto-Pull on Start)
   useEffect(() => {
     if (isAuthenticated) {
-      const loadedProjects = StorageService.getProjects();
-      setProjects(loadedProjects);
+      const loadData = async () => {
+        // Load local first for instant UI
+        const localProjects = StorageService.getProjects();
+        const localTasks = StorageService.getTasks();
+        // Experiments are loaded by context, but we load all here to check against cloud
+        
+        setProjects(localProjects);
+        setTasks(localTasks);
+        
+        // Auto Pull from Cloud
+        if (ghConfig.token && ghConfig.repo) {
+          await handleLoadFromGitHub(true); // true = silent/auto mode
+        }
+        
+        // After initial load is done, allow auto-save to start tracking changes
+        setTimeout(() => {
+          isInitialLoadRef.current = false;
+        }, 1000);
+      };
       
-      const loadedTasks = StorageService.getTasks();
-      setTasks(loadedTasks);
+      loadData();
     }
   }, [isAuthenticated]);
+
+  // 3. Auto-Save Logic (Debounced)
+  useEffect(() => {
+    // Don't auto-save if we are not authenticated, haven't loaded initial data, or don't have config
+    if (!isAuthenticated || isInitialLoadRef.current || !ghConfig.token) return;
+
+    // Debounce logic
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    setSyncStatus('CHECKING'); // Indicate changes are pending
+
+    autoSaveTimerRef.current = setTimeout(async () => {
+       setSyncStatus('SAVING');
+       try {
+         const existing = await GitHubService.getFile(ghConfig);
+         const content = StorageService.exportAllData();
+         await GitHubService.saveFile(ghConfig, content, existing?.sha, "Auto-save via LabNote Pro");
+         
+         setSyncStatus('SYNCED');
+         setLastSyncTime(new Date().toLocaleTimeString());
+       } catch (e) {
+         console.error("Auto-save failed", e);
+         setSyncStatus('ERROR');
+       }
+    }, 5000); // Wait 5 seconds after last change before saving
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [projects, experiments, tasks, isAuthenticated]); // Trigger on any data change
 
   // Handle Loading Experiments based on Context
   useEffect(() => {
@@ -115,10 +170,18 @@ const App = () => {
       setExperiments(allExperiments.filter(e => e.status === ExperimentStatus.IN_PROGRESS));
       setSelectedProject(null); // Clear selected project when in global view
     } else {
-      // Keep experiments state if just entering editor, otherwise clear if no context
+      // Refresh experiments list if we are in dashboard view but data changed
+       if (currentView === 'DASHBOARD' && selectedProject) {
+          const loadedExperiments = StorageService.getExperiments(selectedProject.id);
+          // Only update if length changed or something simple to avoid loop, 
+          // or trust StorageService is fast enough. 
+          // For simplicity in this structure, we rely on the specific handlers to update state,
+          // but we reload here to sync with "Auto Load"
+          setExperiments(loadedExperiments);
+       }
     }
     setActiveMenuId(null);
-  }, [selectedProject, currentView, isAuthenticated]);
+  }, [selectedProject, currentView, isAuthenticated, projects]); // Added projects as dep to refresh when auto-load happens
 
   // Click outside to close menus
   useEffect(() => {
@@ -149,7 +212,7 @@ const App = () => {
     e.preventDefault();
     if (!newProjectName.trim()) return;
     const newProject = StorageService.saveProject(newProjectName);
-    setProjects([...projects, newProject]);
+    setProjects(prev => [...prev, newProject]);
     setNewProjectName('');
     setShowNewProjectInput(false);
     setSelectedProject(newProject);
@@ -161,7 +224,7 @@ const App = () => {
       const updated = { ...selectedProject, notes };
       StorageService.updateProject(updated);
       setSelectedProject(updated);
-      setProjects(projects.map(p => p.id === updated.id ? updated : p));
+      setProjects(prev => prev.map(p => p.id === updated.id ? updated : p));
     }
   };
 
@@ -169,7 +232,7 @@ const App = () => {
     e.stopPropagation();
     if (confirm('Are you sure? This will delete all experiments within this project.')) {
       StorageService.deleteProject(projectId);
-      setProjects(projects.filter(p => p.id !== projectId));
+      setProjects(prev => prev.filter(p => p.id !== projectId));
       if (selectedProject?.id === projectId) {
         setSelectedProject(null);
         setSelectedExperiment(null);
@@ -189,10 +252,12 @@ const App = () => {
     if (!selectedProject || !newExpTitle.trim()) return;
     
     const newExp = StorageService.createExperiment(selectedProject.id, newExpTitle.trim());
-    setExperiments([newExp, ...experiments]);
+    setExperiments(prev => [newExp, ...prev]);
     setSelectedExperiment(newExp);
     setCurrentView('EDITOR');
     setIsNewExpModalOpen(false);
+    // Force trigger projects update to ensure auto-save picks it up
+    setProjects(p => [...p]);
   };
 
   const handleDeleteExperiment = (e: React.MouseEvent, expId: string) => {
@@ -200,11 +265,13 @@ const App = () => {
     setActiveMenuId(null);
     if (confirm('Delete this experiment record?')) {
       StorageService.deleteExperiment(expId);
-      setExperiments(experiments.filter(ex => ex.id !== expId));
+      setExperiments(prev => prev.filter(ex => ex.id !== expId));
       if (selectedExperiment?.id === expId) {
         setSelectedExperiment(null);
         setCurrentView('DASHBOARD');
       }
+       // Force trigger update
+       setProjects(p => [...p]);
     }
   };
 
@@ -219,12 +286,14 @@ const App = () => {
     StorageService.saveExperiment(updated);
     
     // Update local list
-    setExperiments(experiments.map(e => e.id === updated.id ? updated : e));
+    setExperiments(prev => prev.map(e => e.id === updated.id ? updated : e));
     
     // Update selected if match
     if (selectedExperiment?.id === updated.id) {
       setSelectedExperiment(updated);
     }
+    // Force trigger update for auto-save
+    setProjects(p => [...p]);
   };
 
   const handleCopyExperimentRequest = (e: React.MouseEvent, exp: Experiment) => {
@@ -237,7 +306,9 @@ const App = () => {
     if (!copyConfirmExp) return;
     const newExp = StorageService.copyExperiment(copyConfirmExp.id);
     if (newExp) {
-      setExperiments([newExp, ...experiments]);
+      setExperiments(prev => [newExp, ...prev]);
+      // Force trigger update
+      setProjects(p => [...p]);
     }
     setCopyConfirmExp(null);
   };
@@ -292,60 +363,54 @@ const App = () => {
   const saveGhConfig = () => {
     localStorage.setItem('labnote_gh_config', JSON.stringify(ghConfig));
     setShowSettings(false);
+    // Trigger a pull immediately after new config
+    handleLoadFromGitHub(false);
   };
 
-  const handleSyncToGitHub = async () => {
-    if (!ghConfig.token || !ghConfig.owner || !ghConfig.repo) {
-       setShowSettings(true);
-       return;
-    }
-    
-    setIsSyncing(true);
-    try {
-      // 1. Get current SHA if exists
-      const existing = await GitHubService.getFile(ghConfig);
-      
-      // 2. Prepare content
-      const content = StorageService.exportAllData();
-      
-      // 3. Upload
-      await GitHubService.saveFile(ghConfig, content, existing?.sha);
-      
-      alert('Success: Data saved to GitHub repository!');
-    } catch (e: any) {
-      alert(`Error syncing to GitHub: ${e.message}`);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  // Manual Trigger for Sync
+  const handleForceSync = async () => {
+      if(syncStatus === 'SAVING' || syncStatus === 'CHECKING') return;
+      await handleLoadFromGitHub(false);
+  }
 
-  const handleLoadFromGitHub = async () => {
+  const handleLoadFromGitHub = async (isSilent: boolean) => {
     if (!ghConfig.token || !ghConfig.owner || !ghConfig.repo) {
-       setShowSettings(true);
+       if(!isSilent) setShowSettings(true);
        return;
     }
 
-    if (!confirm('This will replace your LOCAL data with data from GitHub. Continue?')) return;
+    setSyncStatus('CHECKING');
 
-    setIsSyncing(true);
     try {
       const result = await GitHubService.getFile(ghConfig);
       if (!result) {
-        alert('File not found in repository.');
+        if(!isSilent) alert('File not found in repository.');
+        setSyncStatus('IDLE');
         return;
       }
       
       const success = StorageService.importAllData(result.content);
       if (success) {
-        alert('Data loaded from GitHub successfully! Reloading...');
-        window.location.reload();
+        // Refresh State from LocalStorage
+        setProjects(StorageService.getProjects());
+        setTasks(StorageService.getTasks());
+        // If viewing global experiments, refresh them too
+        if (currentView === 'IN_PROGRESS') {
+           const all = StorageService.getExperiments();
+           setExperiments(all.filter(e => e.status === ExperimentStatus.IN_PROGRESS));
+        }
+        
+        setSyncStatus('SYNCED');
+        setLastSyncTime(new Date().toLocaleTimeString());
+        if(!isSilent) console.log('Data loaded from GitHub successfully');
       } else {
-        alert('Failed to parse data from GitHub.');
+        setSyncStatus('ERROR');
+        if(!isSilent) alert('Failed to parse data from GitHub.');
       }
     } catch (e: any) {
-      alert(`Error loading from GitHub: ${e.message}`);
-    } finally {
-      setIsSyncing(false);
+      console.error(e);
+      setSyncStatus('ERROR');
+      if(!isSilent) alert(`Error loading from GitHub: ${e.message}`);
     }
   };
 
@@ -738,6 +803,10 @@ const App = () => {
            </div>
            
            <div className="p-6 space-y-4">
+             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 mb-2">
+               Note: These settings override environment variables. Clear them to use defaults.
+             </div>
+
              <div>
                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Personal Access Token (PAT)</label>
                <input 
@@ -856,40 +925,41 @@ const App = () => {
 
         {/* Bottom Actions: Sync & Settings */}
         <div className="p-3 border-t border-slate-800">
-           {/* Cloud Sync Buttons - Compact Version */}
-           {isSidebarOpen ? (
-             <div className="bg-slate-800/50 rounded-lg p-3">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Data Sync</span>
-                  {isSyncing && <RefreshCw size={10} className="animate-spin text-indigo-400"/>}
+           {/* Cloud Sync Status Indicator */}
+           {isSidebarOpen && (
+             <div className="bg-slate-800/50 rounded-lg p-3 mb-2">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    {syncStatus === 'SYNCED' ? 'Cloud Synced' : 
+                     syncStatus === 'SAVING' ? 'Saving...' :
+                     syncStatus === 'CHECKING' ? 'Checking...' :
+                     syncStatus === 'ERROR' ? 'Sync Error' : 'Ready'}
+                  </span>
+                  {syncStatus === 'SYNCED' ? <CloudCheck size={14} className="text-emerald-400"/> :
+                   syncStatus === 'ERROR' ? <CloudOff size={14} className="text-red-400"/> :
+                   syncStatus !== 'IDLE' ? <Loader2 size={14} className="animate-spin text-indigo-400"/> : null}
                 </div>
-                <div className="flex gap-2 justify-between">
-                   <button 
-                     onClick={handleSyncToGitHub}
-                     disabled={isSyncing}
-                     className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors"
-                     title="Save to Cloud"
-                   >
-                     <UploadCloud size={16} />
-                   </button>
-                   <button 
-                     onClick={handleLoadFromGitHub}
-                     disabled={isSyncing}
-                     className="p-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-md transition-colors"
-                     title="Load from Cloud"
-                   >
-                     <Download size={16} />
-                   </button>
-                   <div className="w-px bg-slate-700 mx-1"></div>
-                   <button onClick={handleBackupData} title="Export JSON" className="p-2 text-slate-400 hover:text-white bg-slate-700/50 hover:bg-slate-700 rounded-md"><FileDown size={16} /></button>
-                   <button onClick={handleRestoreClick} title="Import JSON" className="p-2 text-slate-400 hover:text-white bg-slate-700/50 hover:bg-slate-700 rounded-md"><UploadCloud size={16} /></button>
-                </div>
-             </div>
-           ) : (
-             <div className="flex flex-col items-center gap-2">
-                <button onClick={handleSyncToGitHub} title="Save to GitHub" className="p-2 hover:bg-indigo-600 rounded-lg text-slate-400 hover:text-white transition-all"><UploadCloud size={20}/></button>
+                {lastSyncTime && <div className="text-[10px] text-slate-600 text-right">Last: {lastSyncTime}</div>}
              </div>
            )}
+
+           <div className="flex gap-2 justify-between">
+              {/* Force Sync Button */}
+              <button 
+                onClick={handleForceSync}
+                disabled={syncStatus === 'SAVING' || syncStatus === 'CHECKING'}
+                className="flex-1 p-2 bg-slate-800 hover:bg-indigo-600 hover:text-white text-slate-400 rounded-md transition-all flex items-center justify-center"
+                title="Force Sync"
+              >
+                <RefreshCw size={16} className={syncStatus === 'SAVING' || syncStatus === 'CHECKING' ? 'animate-spin' : ''} />
+              </button>
+              
+              <div className="w-px bg-slate-700 mx-1"></div>
+              
+              <button onClick={handleBackupData} title="Export JSON" className="flex-1 p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md flex items-center justify-center"><FileDown size={16} /></button>
+              <button onClick={handleRestoreClick} title="Import JSON" className="flex-1 p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md flex items-center justify-center"><UploadCloud size={16} /></button>
+           </div>
+
            <button 
              onClick={() => setShowSettings(true)}
              className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-slate-800 text-slate-400 transition-colors ${!isSidebarOpen && 'justify-center'} mt-2`}
